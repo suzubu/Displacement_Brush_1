@@ -7,6 +7,8 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 document.body.appendChild(renderer.domElement);
 
+let isDrawing = false;
+let lastMoveTime = 0;
 
 // 2. Main Scene & Camera
 const scene = new THREE.Scene();
@@ -40,6 +42,7 @@ const brushMaterial = new THREE.ShaderMaterial({
     u_mouse: { value: new THREE.Vector2(0.5, 0.5) }, // normalized
     u_prevTexture: { value: null }, // for fading trail
     u_brushTexture: { value: brushTexture },
+    u_isDrawing: { value: false },
   },
   vertexShader: `
     varying vec2 v_uv;
@@ -54,22 +57,23 @@ precision mediump float;
 uniform vec2 u_mouse;
 uniform sampler2D u_prevTexture;
 uniform sampler2D u_brushTexture;
+uniform bool u_isDrawing;
 varying vec2 v_uv;
 
 void main() {
 //  **TRAIL LENGTH / DECAY** 
-  vec4 prev = texture2D(u_prevTexture, v_uv) * 0.96;
+  vec4 prev = texture2D(u_prevTexture, v_uv) * 0.88;
 
   // Use brush texture alpha to shape the brush mark
   float d = distance(v_uv, u_mouse);
   vec2 brushUV = (v_uv - u_mouse) * 5.0 + 0.5;
 //   **BRUSH SIZE**
   float brush = texture2D(u_brushTexture, brushUV).a;
+  float intensity = brush * 0.6;
+  vec4 blended = mix(prev, vec4(intensity), brush * 0.5);
 
-  // Blend white brush over previous texture with soft alpha
 //   **TRAIL INTENSITY
- float intensity = brush * 2.0;  // You can tune this later
-gl_FragColor = mix(prev, vec4(intensity), brush);
+  gl_FragColor = u_isDrawing ? blended : prev;
 }
 `,
 });
@@ -113,6 +117,8 @@ void main() {
   // Sample the brush texture
   float strength = texture2D(u_brush, v_uv).a;
 
+  if (strength < 0.01) strength = 0.0;
+
   // Get brush gradient (offsets in x/y)
   float dx = texture2D(u_brush, v_uv + vec2(0.001, 0.0)).a - strength;
   float dy = texture2D(u_brush, v_uv + vec2(0.0, 0.001)).a - strength;
@@ -141,6 +147,8 @@ let mouse = new THREE.Vector2(0.5, 0.5);
 window.addEventListener("mousemove", (e) => {
   mouse.x = e.clientX / window.innerWidth;
   mouse.y = 1.0 - e.clientY / window.innerHeight; //   flip Y for WebGL space **
+  isDrawing = true;
+  lastMoveTime = performance.now();
 });
 
 // 6. Clock +  animate loop
@@ -169,7 +177,11 @@ function animate() {
   brushRenderTarget = brushRenderTarget2;
   brushRenderTarget2 = temp;
 
-  material.uniforms.u_brush.value = brushRenderTarget.texture;
+  const now = performance.now();
+  if (now - lastMoveTime > 100) {
+    isDrawing = false;
+  }
+  brushMaterial.uniforms.u_isDrawing.value = isDrawing;
 
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
